@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="256x256" href="/icon-256.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WX-SCOPE — Desktop Weather Radar</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Rajdhani:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <div id="pip-float" hidden>
+        <canvas id="pip-scope"></canvas>
+        <button type="button" id="pip-float-close" title="Close">×</button>
+      </div>
+      <header class="topbar">
+        <div class="brand">
+          <span class="mark">WX-SCOPE</span>
+          <span class="sub">DESKTOP WEATHER RADAR</span>
+        </div>
+        <div class="pips">
+          <span class="pip" id="pip-radar" data-state="off">RADAR</span>
+          <span class="pip" id="pip-map" data-state="off">MAP</span>
+          <span class="pip" id="pip-precip" data-state="off">PRECIP</span>
+          <span class="pip" id="pip-ltng" data-state="off">LIGHTNING</span>
+          <span class="pip" id="pip-fix" data-state="off">FIX</span>
+        </div>
+        <div class="top-actions">
+          <button type="button" id="btn-geo" title="Use GPS">GPS</button>
+          <button type="button" id="btn-pip" title="Picture-in-picture radar (P)">PIP</button>
+          <button type="button" id="btn-full" title="Fullscreen (F)">FULL</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="scope-wrap">
+          <canvas id="scope"></canvas>
+          <div class="scanlines"></div>
+        </section>
+
+        <aside id="side">
+          <section class="card alert-card" id="alert-card" data-level="clear">
+            <div class="card-kicker">CLOSE STRIKE WATCH</div>
+            <div id="alert-title">NO CLOSE STRIKES</div>
+            <div id="alert-detail">Threshold 6 MI · 30-30 rule</div>
+          </section>
+
+          <section class="card precip-card" id="precip-card" data-wet="no">
+            <div class="card-kicker">CURRENT PRECIPITATION</div>
+            <div id="precip-title">—</div>
+            <div id="precip-detail">awaiting fix</div>
+          </section>
+
+          <section class="card">
+            <div class="card-kicker">FIX</div>
+            <div class="fix-row">
+              <label>LAT <input id="lat" inputmode="decimal" spellcheck="false" /></label>
+              <label>LON <input id="lon" inputmode="decimal" spellcheck="false" /></label>
+            </div>
+            <label class="full">LABEL <input id="label" placeholder="station name" /></label>
+            <div class="hint" id="fix-hint">Awaiting position</div>
+          </section>
+
+          <section class="card stats">
+            <div class="stat"><span>IN RANGE</span><strong id="st-range">0</strong></div>
+            <div class="stat"><span>5 MIN</span><strong id="st-5">0</strong></div>
+            <div class="stat"><span>CLOSE</span><strong id="st-close">0</strong></div>
+            <div class="stat"><span>NEAREST</span><strong id="st-near">—</strong></div>
+          </section>
+
+          <section class="card log-card">
+            <div class="card-kicker">IDENTIFIED STRIKES</div>
+            <div id="log" class="log"></div>
+          </section>
+
+          <section class="card">
+            <div class="card-kicker">SCOPE</div>
+            <label class="full">
+              RANGE
+              <select id="range">
+                <option value="5">5 mi · streets</option>
+                <option value="10">10 mi</option>
+                <option value="25">25 mi</option>
+                <option value="50">50 mi</option>
+                <option value="100">100 mi</option>
+                <option value="150">150 mi</option>
+                <option value="250">250 mi</option>
+              </select>
+            </label>
+            <label class="full">
+              UNITS
+              <select id="units">
+                <option value="mi">miles</option>
+                <option value="km">kilometers</option>
+              </select>
+            </label>
+            <label class="full">
+              RADAR
+              <select id="radar-source">
+                <option value="auto">auto (MRMS US / global)</option>
+                <option value="iem">US MRMS / NEXRAD</option>
+                <option value="rainviewer">RainViewer global</option>
+              </select>
+            </label>
+            <label class="full">
+              CLOSE ALERT
+              <select id="close">
+                <option value="1">1 mi · overhead</option>
+                <option value="3">3 mi</option>
+                <option value="6">6 mi · 30-30 rule</option>
+                <option value="10">10 mi</option>
+                <option value="15">15 mi</option>
+              </select>
+            </label>
+            <label class="full">
+              SWEEP SPEED
+              <select id="sweep">
+                <option value="1.2">fast 1.2s</option>
+                <option value="2.4">2.4s</option>
+                <option value="4">4s</option>
+                <option value="6">WSR-88D 6s</option>
+              </select>
+            </label>
+            <label class="full">
+              SWEEP COLOR
+              <select id="sweep-color">
+                <option value="dim">dim sage</option>
+                <option value="phosphor">classic green</option>
+                <option value="amber">amber</option>
+                <option value="ice">ice</option>
+                <option value="white">white</option>
+                <option value="off">off</option>
+              </select>
+            </label>
+            <label class="full">
+              SWEEP BRIGHTNESS
+              <select id="sweep-bright">
+                <option value="low">low</option>
+                <option value="med">medium</option>
+                <option value="high">high</option>
+              </select>
+            </label>
+            <label class="full">
+              SWEEP TRAIL
+              <select id="sweep-trail">
+                <option value="off">none</option>
+                <option value="short">short</option>
+                <option value="long">long</option>
+              </select>
+            </label>
+            <div class="toggles">
+              <label><input type="checkbox" id="radar-on" /> RADAR</label>
+              <label><input type="checkbox" id="map-on" /> MAP</label>
+              <label><input type="checkbox" id="ltng-on" /> LIGHTNING</label>
+              <label><input type="checkbox" id="audio-on" /> AUDIO</label>
+            </div>
+          </section>
+
+          <p class="attrib">
+            Radar: IEM / NWS MRMS &amp; NEXRAD, RainViewer. Streets: Esri World Street Map.
+            Precip: Open-Meteo. Lightning: Blitzortung.org. Personal use.
+          </p>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
