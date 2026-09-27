@@ -5,7 +5,7 @@ import { LightningNet, enrich } from './lightning.ts'
 import { PrecipFeed } from './precip.ts'
 import { RadarFeed } from './radar.ts'
 import { RadarDisplay } from './render.ts'
-import { loadSettings, saveSettings } from './settings.ts'
+import { clampRadarRefreshSec, loadSettings, saveSettings } from './settings.ts'
 import type { EnrichedStrike, GeoFix, Settings, SweepBright, SweepColor, SweepTrail } from './types.ts'
 
 declare global {
@@ -13,6 +13,7 @@ declare global {
     wxDesktop?: {
       openPip: () => Promise<void>
       closePip: () => Promise<void>
+      getLocation: () => Promise<{ ok: boolean; lat?: number; lon?: number; acc?: number }>
     }
   }
 }
@@ -38,8 +39,8 @@ let origin: GeoFix | null =
     ? {
         lat: settings.lat,
         lon: settings.lon,
-        label: settings.label || 'SAVED',
-        source: 'manual',
+        label: settings.label || settings.fixSource.toUpperCase(),
+        source: settings.fixSource,
       }
     : null
 
@@ -57,6 +58,7 @@ const el = {
   range: document.querySelector<HTMLSelectElement>('#range')!,
   units: document.querySelector<HTMLSelectElement>('#units')!,
   source: document.querySelector<HTMLSelectElement>('#radar-source')!,
+  radarRefresh: document.querySelector<HTMLSelectElement>('#radar-refresh')!,
   close: document.querySelector<HTMLSelectElement>('#close')!,
   sweep: document.querySelector<HTMLSelectElement>('#sweep')!,
   sweepColor: document.querySelector<HTMLSelectElement>('#sweep-color')!,
@@ -89,6 +91,7 @@ function applyForm(): void {
   el.range.value = String(settings.rangeMi)
   el.units.value = settings.units
   el.source.value = settings.radarSource
+  el.radarRefresh.value = String(settings.radarRefreshSec)
   el.close.value = String(settings.closeMi)
   el.sweep.value = String(settings.sweepSec)
   el.sweepColor.value = settings.sweepColor
@@ -102,6 +105,7 @@ function applyForm(): void {
     el.lat.value = origin.lat.toFixed(4)
     el.lon.value = origin.lon.toFixed(4)
     el.label.value = origin.label
+    el.fixHint.textContent = fixHint(origin)
   }
   audio.enabled = settings.audio
 }
@@ -110,6 +114,7 @@ function persist(): void {
   settings.lat = origin?.lat ?? null
   settings.lon = origin?.lon ?? null
   settings.label = origin?.label ?? settings.label
+  settings.fixSource = origin?.source ?? settings.fixSource
   saveSettings(settings)
 }
 
@@ -121,11 +126,21 @@ function setOrigin(fix: GeoFix): void {
   el.lat.value = fix.lat.toFixed(4)
   el.lon.value = fix.lon.toFixed(4)
   el.label.value = fix.label
-  el.fixHint.textContent = `${fix.source.toUpperCase()} ${fix.accuracyM ? `±${Math.round(fix.accuracyM)}m` : ''}`.trim()
+  el.fixHint.textContent = fixHint(fix)
   el.pipFix.dataset.state = 'live'
   persist()
   requestRadar()
   void precip.refresh(fix.lat, fix.lon, settings.units)
+}
+
+function fixHint(fix: GeoFix): string {
+  if (fix.source === 'ip') return 'IP city estimate — click GPS or enter lat/lon'
+  if (fix.source === 'gps') {
+    return fix.accuracyM
+      ? `GPS ±${Math.round(fix.accuracyM)}m`
+      : 'GPS'
+  }
+  return 'MANUAL'
 }
 
 function rangeKm(): number {
@@ -238,6 +253,7 @@ function bind(): void {
     settings.rangeMi = Number(el.range.value)
     settings.units = el.units.value === 'km' ? 'km' : 'mi'
     settings.radarSource = el.source.value as Settings['radarSource']
+    settings.radarRefreshSec = clampRadarRefreshSec(el.radarRefresh.value)
     settings.closeMi = Number(el.close.value)
     settings.sweepSec = Number(el.sweep.value)
     settings.sweepColor = el.sweepColor.value as SweepColor
@@ -251,7 +267,12 @@ function bind(): void {
     persist()
     const t = ev?.target
     const visualOnly =
-      t === el.sweepColor || t === el.sweepBright || t === el.sweepTrail || t === el.sweep || t === el.audioOn
+      t === el.sweepColor ||
+      t === el.sweepBright ||
+      t === el.sweepTrail ||
+      t === el.sweep ||
+      t === el.audioOn ||
+      t === el.radarRefresh
     if (!visualOnly) {
       requestRadar()
       if (origin) void precip.refresh(origin.lat, origin.lon, settings.units)
@@ -265,6 +286,7 @@ function bind(): void {
     el.range,
     el.units,
     el.source,
+    el.radarRefresh,
     el.close,
     el.sweep,
     el.sweepColor,
@@ -296,7 +318,7 @@ function bind(): void {
 
   document.querySelector('#btn-geo')!.addEventListener('click', () => {
     audio.unlock()
-    void locateGps()
+    void locateGps(true)
   })
   document.querySelector('#btn-pip')!.addEventListener('click', () => {
     audio.unlock()
@@ -320,7 +342,7 @@ function bind(): void {
     if (ev.key === 'f' || ev.key === 'F') void toggleFullscreen()
     if (ev.key === '+' || ev.key === '=') bumpRange(1)
     if (ev.key === '-' || ev.key === '_') bumpRange(-1)
-    if (ev.key === 'g' || ev.key === 'G') void locateGps()
+    if (!typing && (ev.key === 'g' || ev.key === 'G')) void locateGps(true)
     if (!typing && (ev.key === 'p' || ev.key === 'P')) void openPip()
     if (ev.key === 'm' || ev.key === 'M') {
       el.audioOn.checked = !el.audioOn.checked
@@ -349,31 +371,53 @@ async function toggleFullscreen(): Promise<void> {
   await document.documentElement.requestFullscreen()
 }
 
-function locateGps(): Promise<void> {
-  return new Promise((resolve) => {
-    if (!navigator.geolocation) {
-      el.fixHint.textContent = 'Geolocation unavailable'
-      resolve()
-      return
+function applyGps(lat: number, lon: number, accuracyM?: number): void {
+  setOrigin({
+    lat,
+    lon,
+    label: origin?.source === 'manual' && origin.label ? origin.label : 'GPS',
+    accuracyM,
+    source: 'gps',
+  })
+}
+
+async function locateGps(force = false): Promise<void> {
+  if (!force && origin?.source === 'manual') return
+  el.fixHint.textContent = 'GPS acquiring…'
+  el.pipFix.dataset.state = 'connecting'
+
+  const desktop = window.wxDesktop?.getLocation
+  if (desktop) {
+    try {
+      const fix = await desktop()
+      if (fix.ok && typeof fix.lat === 'number' && typeof fix.lon === 'number') {
+        applyGps(fix.lat, fix.lon, fix.acc)
+        return
+      }
+    } catch {
+      /* fall through to the browser geolocation API */
     }
-    el.fixHint.textContent = 'GPS acquiring…'
-    el.pipFix.dataset.state = 'connecting'
+  }
+
+  if (!navigator.geolocation) {
+    el.fixHint.textContent = origin ? fixHint(origin) : 'GPS unavailable — enter lat/lon'
+    return
+  }
+
+  await new Promise<void>((resolve) => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setOrigin({
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude,
-          label: settings.label || 'GPS',
-          accuracyM: pos.coords.accuracy,
-          source: 'gps',
-        })
+        applyGps(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy)
         resolve()
       },
       () => {
-        el.fixHint.textContent = origin ? `using ${origin.source}` : 'GPS denied — enter lat/lon'
+        el.fixHint.textContent = origin
+          ? `${fixHint(origin)} — GPS denied`
+          : 'GPS denied — enter lat/lon'
+        el.pipFix.dataset.state = origin ? 'live' : 'connecting'
         resolve()
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30_000 },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10_000 },
     )
   })
 }
@@ -482,8 +526,12 @@ function closeInPagePip(): void {
 bind()
 if (settings.lightningEnabled) lightning.start()
 if (origin) requestRadar()
-if (isPip) void locateIp()
-else void locateIp().then(() => locateGps())
+if (!isPip) {
+  void (async () => {
+    await locateGps(false)
+    if (!origin) await locateIp()
+  })()
+}
 radar.startLoop(() => ({
   lat: origin?.lat ?? 0,
   lon: origin?.lon ?? 0,
@@ -491,6 +539,7 @@ radar.startLoop(() => ({
   source: settings.radarSource,
   sizePx: Math.min(canvas.parentElement?.clientWidth ?? 800, canvas.parentElement?.clientHeight ?? 800),
   enabled: Boolean(origin) && (isPip || settings.radarEnabled || settings.mapEnabled),
+  refreshMs: settings.radarRefreshSec * 1000,
   layers: isPip
     ? { radar: true, map: false }
     : { radar: settings.radarEnabled, map: settings.mapEnabled },

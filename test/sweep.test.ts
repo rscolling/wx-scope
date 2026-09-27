@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inSweptArc, pixelTurn, stampSweptSector, sweepCanvasAngle, sweepTurn } from './sweep.ts'
+import { inSweptArc, pixelTurn, stampSweptSector, sweepCanvasAngle, sweepTurn } from '../src/sweep.ts'
 
 function xyAt(size: number, turn: number, radiusFrac = 0.6): { x: number; y: number } {
   const cx = (size - 1) / 2

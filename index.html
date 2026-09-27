@@ -103,9 +103,18 @@
             <label class="full">
               RADAR
               <select id="radar-source">
-                <option value="auto">auto (MRMS US / global)</option>
-                <option value="iem">US MRMS / NEXRAD</option>
+                <option value="auto">auto (NOAA 2 min / global)</option>
+                <option value="noaa">NOAA MRMS 2 min</option>
+                <option value="iem">IEM MRMS / NEXRAD</option>
                 <option value="rainviewer">RainViewer global</option>
+              </select>
+            </label>
+            <label class="full">
+              RADAR REFRESH
+              <select id="radar-refresh">
+                <option value="15">15s</option>
+                <option value="30">30s</option>
+                <option value="60">60s</option>
               </select>
             </label>
             <label class="full">
@@ -163,7 +172,7 @@
           </section>
 
           <p class="attrib">
-            Radar: IEM / NWS MRMS &amp; NEXRAD, RainViewer. Streets: Esri World Street Map.
+            Radar: NCEP MRMS (radar.weather.gov), IEM / NWS NEXRAD, RainViewer. Streets: Esri World Street Map.
             Precip: Open-Meteo. Lightning: Blitzortung.org. Personal use.
           </p>
         </aside>

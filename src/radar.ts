@@ -1,8 +1,11 @@
-import { destination, isConus, latLonToWorld, pickZoom, tilesForRadius } from './geo.ts'
+import { destination, isConus, latLonToWorld, pickZoom, tileBBox3857, tilesForRadius } from './geo.ts'
 import type { RadarFrame, RadarSource } from './types.ts'
 
 const IEM_HSR = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/q2-hsr-900913'
 const IEM_N0Q = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913'
+const IEM_LCREF_META = 'https://mesonet.agron.iastate.edu/data/gis/images/4326/mrms/lcref.json'
+const NOAA_WMS = 'https://opengeo.ncep.noaa.gov/geoserver/conus/conus_bref_qcd/ows'
+const NOAA_CAP = `${NOAA_WMS}?service=wms&version=1.1.1&request=GetCapabilities`
 const RV_MAPS = 'https://api.rainviewer.com/public/weather-maps.json'
 const STREET =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile'
@@ -51,14 +54,69 @@ async function fetchRv(): Promise<{ host: string; path: string; time: number } |
   return { host: json.host, path: last.path, time: last.time * 1000 }
 }
 
+export function parseWmsTimeExtent(xml: string): { defaultTime: string | null; times: string[] } {
+  const def = xml.match(/<Extent\s+name="time"[^>]*\bdefault="([^"]+)"/i)
+  const body = xml.match(/<Extent\s+name="time"[^>]*>([^<]*)<\/Extent>/i)
+  const times = body?.[1]
+    ? body[1]
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : []
+  return { defaultTime: def?.[1] ?? null, times }
+}
+
+function noaaTileUrl(x: number, y: number, z: number, time: string): string {
+  const [minX, minY, maxX, maxY] = tileBBox3857(x, y, z)
+  return (
+    `${NOAA_WMS}?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&FORMAT=image/png` +
+    `&TRANSPARENT=true&TILED=true&LAYERS=conus_bref_qcd&TIME=${encodeURIComponent(time)}` +
+    `&WIDTH=${TILE}&HEIGHT=${TILE}&SRS=EPSG:3857&BBOX=${minX},${minY},${maxX},${maxY}`
+  )
+}
+
+async function fetchNoaaLatest(): Promise<{ time: string; timeMs: number } | null> {
+  try {
+    const res = await fetch(NOAA_CAP)
+    if (!res.ok) return null
+    const { defaultTime, times } = parseWmsTimeExtent(await res.text())
+    const time = times[times.length - 1] ?? defaultTime
+    if (!time) return null
+    const timeMs = Date.parse(time)
+    if (!Number.isFinite(timeMs)) return null
+    return { time, timeMs }
+  } catch {
+    return null
+  }
+}
+
+export function parseLcrefValid(json: unknown): number | null {
+  if (!json || typeof json !== 'object') return null
+  const meta = (json as { meta?: { start_valid?: unknown } }).meta
+  if (typeof meta?.start_valid !== 'string') return null
+  const t = Date.parse(meta.start_valid)
+  return Number.isFinite(t) ? t : null
+}
+
+async function fetchIemValid(): Promise<number | null> {
+  try {
+    const res = await fetch(IEM_LCREF_META)
+    if (!res.ok) return null
+    return parseLcrefValid(await res.json())
+  } catch {
+    return null
+  }
+}
+
 function resolveSource(
   source: RadarSource,
   lat: number,
   lon: number,
-): 'iem' | 'rainviewer' {
+): 'noaa' | 'iem' | 'rainviewer' {
+  if (source === 'noaa') return 'noaa'
   if (source === 'iem') return 'iem'
   if (source === 'rainviewer') return 'rainviewer'
-  return isConus(lat, lon) ? 'iem' : 'rainviewer'
+  return isConus(lat, lon) ? 'noaa' : 'rainviewer'
 }
 
 async function loadMosaic(
@@ -126,6 +184,9 @@ export class RadarFeed {
 
   private gen = 0
   private timer: number | null = null
+  private lastTickAt = 0
+  private lastPaintKey = ''
+  private lastViewKey = ''
 
   async refresh(
     lat: number,
@@ -142,7 +203,7 @@ export class RadarFeed {
       this.onUpdate?.(null)
       return
     }
-    this.status = 'fetching'
+    if (!this.frame) this.status = 'fetching'
     try {
       const built = await this.paint(lat, lon, rangeKm, source, sizePx, layers, gen)
       if (gen !== this.gen || !built) return
@@ -167,17 +228,23 @@ export class RadarFeed {
       sizePx: number
       enabled: boolean
       layers: LayerOpts
+      refreshMs: number
     },
   ): void {
     const tick = () => {
       const args = getArgs()
-      if (args.enabled) {
-        void this.refresh(args.lat, args.lon, args.rangeKm, args.source, args.sizePx, args.layers)
-      }
+      if (!args.enabled) return
+      if (this.status === 'fetching') return
+      const ms = Math.max(15_000, args.refreshMs || 30_000)
+      const now = Date.now()
+      if (this.lastTickAt && now - this.lastTickAt < ms) return
+      this.lastTickAt = now
+      void this.refresh(args.lat, args.lon, args.rangeKm, args.source, args.sizePx, args.layers)
     }
+    this.lastTickAt = 0
     tick()
     if (this.timer != null) window.clearInterval(this.timer)
-    this.timer = window.setInterval(tick, 60_000)
+    this.timer = window.setInterval(tick, 1000)
   }
 
   stop(): void {
@@ -196,20 +263,72 @@ export class RadarFeed {
     gen: number,
   ): Promise<RadarFrame | null> {
     const resolved = resolveSource(source, lat, lon)
-    const bust = Math.floor(Date.now() / 30_000)
+    const size = Math.max(256, Math.min(768, Math.round(sizePx)))
+    const viewKey = `${lat.toFixed(4)}:${lon.toFixed(4)}:${rangeKm}:${size}:${layers.radar}:${layers.map}:${resolved}`
 
     let dataTime: number | null = Date.now()
     const names: string[] = []
+    let productKey = 'none'
+    let rvMeta: { host: string; path: string; time: number } | null = null
+    let noaaTime: string | null = null
+    let feed: 'noaa' | 'iem' | 'rainviewer' = resolved
 
-    const streetP: Promise<Mosaic | null> = layers.map
-      ? loadMosaic(lat, lon, rangeKm, 16, MAX_MAP_TILES, (tile, z) => {
-          return `${STREET}/${z}/${tile.y}/${tile.x}`
-        }).catch(() => null)
-      : Promise.resolve(null)
+    if (layers.radar) {
+      if (resolved === 'noaa') {
+        const latest = await fetchNoaaLatest()
+        if (latest) {
+          noaaTime = latest.time
+          dataTime = latest.timeMs
+          productKey = `noaa:${latest.time}`
+        } else {
+          feed = 'iem'
+        }
+      }
+      if (feed === 'iem') {
+        const valid = await fetchIemValid()
+        if (valid != null) {
+          dataTime = valid
+          productKey = `iem:${valid}`
+        } else {
+          productKey = `iem:${Math.floor(Date.now() / 30_000)}`
+        }
+      } else if (feed === 'rainviewer') {
+        rvMeta = await fetchRv()
+        if (!rvMeta) throw new Error('no RainViewer frames')
+        dataTime = rvMeta.time
+        productKey = `rv:${rvMeta.time}`
+      }
+    }
+    if (gen !== this.gen) return null
+
+    const paintKey = `${viewKey}|${productKey}`
+    if (paintKey === this.lastPaintKey && this.frame) return this.frame
+
+    const reuseMap = Boolean(layers.map && this.lastViewKey === viewKey && this.frame?.mapBitmap)
+    const bust = dataTime ?? Math.floor(Date.now() / 30_000)
+
+    const streetP: Promise<Mosaic | null> =
+      layers.map && !reuseMap
+        ? loadMosaic(lat, lon, rangeKm, 16, MAX_MAP_TILES, (tile, z) => {
+            return `${STREET}/${z}/${tile.y}/${tile.x}`
+          }).catch(() => null)
+        : Promise.resolve(null)
 
     const radarP: Promise<Mosaic | null> = layers.radar
       ? (async () => {
-          if (resolved === 'iem') {
+          if (feed === 'noaa' && noaaTime) {
+            const time = noaaTime
+            try {
+              const m = await loadMosaic(lat, lon, rangeKm, 8, MAX_RADAR_TILES, (tile, z) => {
+                return noaaTileUrl(tile.x, tile.y, z, time)
+              })
+              names.push('NOAA MRMS')
+              return m
+            } catch {
+              feed = 'iem'
+            }
+          }
+          if (feed === 'iem') {
             try {
               const m = await loadMosaic(lat, lon, rangeKm, 9, MAX_RADAR_TILES, (tile, z) => {
                 return `${IEM_HSR}/${z}/${tile.x}/${tile.y}.png?t=${bust}`
@@ -224,26 +343,25 @@ export class RadarFeed {
               return m
             }
           }
-          const meta = await fetchRv()
+          const meta = rvMeta
           if (!meta) throw new Error('no RainViewer frames')
-          dataTime = meta.time
           const m = await loadMosaic(lat, lon, rangeKm, 7, MAX_RADAR_TILES, (tile, z) => {
             return `${meta.host}${meta.path}/256/${z}/${tile.x}/${tile.y}/2/1_1.png`
           })
           names.push('RainViewer')
           return m
         })().catch((err) => {
-          if (!layers.map) throw err
+          if (!layers.map && !reuseMap) throw err
           return null
         })
       : Promise.resolve(null)
 
     const [streets, radarM] = await Promise.all([streetP, radarP])
     if (streets) names.unshift('STREETS')
+    else if (reuseMap && this.frame?.sourceName.includes('STREETS')) names.unshift('STREETS')
     if (gen !== this.gen) return null
-    if (!streets && !radarM) throw new Error('no map or radar tiles')
+    if (!streets && !reuseMap && !radarM) throw new Error('no map or radar tiles')
 
-    const size = Math.max(256, Math.min(768, Math.round(sizePx)))
     const cx = (size - 1) / 2
     const pxPerKm = size / 2 / rangeKm
 
@@ -282,12 +400,17 @@ export class RadarFeed {
     }
     mapL?.ctx.putImageData(mapL.img, 0, 0)
     radL?.ctx.putImageData(radL.img, 0, 0)
+    const keepOldRadar = Boolean(layers.radar && this.frame && this.lastViewKey === viewKey)
+    this.lastPaintKey = paintKey
+    this.lastViewKey = viewKey
     return {
-      bitmap: radL?.canvas ?? null,
-      mapBitmap: mapL?.canvas ?? null,
+      bitmap: layers.radar
+        ? (radL?.canvas ?? (keepOldRadar ? this.frame?.bitmap ?? null : null))
+        : null,
+      mapBitmap: mapL?.canvas ?? (reuseMap ? this.frame?.mapBitmap ?? null : null),
       paintedAt: Date.now(),
       dataTime,
-      sourceName: names.join(' + ') || 'SCOPE',
+      sourceName: names.join(' + ') || this.frame?.sourceName || 'SCOPE',
       tileCount: (streets?.count ?? 0) + (radarM?.count ?? 0),
     }
   }

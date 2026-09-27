@@ -11,6 +11,9 @@ const blitzProxy = {
 
 export default defineConfig({
   base: './',
+  test: {
+    include: ['test/**/*.test.ts'],
+  },
   server: {
     port: 5173,
     open: process.env.WX_ELECTRON ? false : true,

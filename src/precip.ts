@@ -31,11 +31,11 @@ const WMO: Record<number, string> = {
   99: 'T-STORM HAIL',
 }
 
-function wmoLabel(code: number): string {
+export function wmoLabel(code: number): string {
   return WMO[code] ?? `WMO ${code}`
 }
 
-function isWet(code: number, lastHourIn: number): boolean {
+export function isWet(code: number, lastHourIn: number): boolean {
   if (lastHourIn >= 0.005) return true
   return code >= 51 && code !== 45 && code !== 48
 }

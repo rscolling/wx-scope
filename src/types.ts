@@ -1,5 +1,5 @@
 export type Units = 'mi' | 'km'
-export type RadarSource = 'auto' | 'iem' | 'rainviewer'
+export type RadarSource = 'auto' | 'noaa' | 'iem' | 'rainviewer'
 export type SweepColor = 'dim' | 'phosphor' | 'amber' | 'ice' | 'white' | 'off'
 export type SweepBright = 'low' | 'med' | 'high'
 export type SweepTrail = 'off' | 'short' | 'long'
@@ -32,9 +32,11 @@ export interface Settings {
   lat: number | null
   lon: number | null
   label: string
+  fixSource: GeoFix['source']
   rangeMi: number
   units: Units
   radarSource: RadarSource
+  radarRefreshSec: number
   radarEnabled: boolean
   mapEnabled: boolean
   lightningEnabled: boolean

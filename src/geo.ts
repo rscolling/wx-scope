@@ -74,6 +74,18 @@ export function isConus(lat: number, lon: number): boolean {
   return lat >= 24 && lat <= 50 && lon >= -125 && lon <= -66
 }
 
+/** Web Mercator half-world in meters (EPSG:3857). */
+export const WEB_MERCATOR_ORIGIN = 20037508.342789244
+
+/** WMS 1.1 BBOX for an XYZ tile: minX, minY, maxX, maxY in EPSG:3857. */
+export function tileBBox3857(x: number, y: number, z: number): [number, number, number, number] {
+  const n = 2 ** z
+  const size = (WEB_MERCATOR_ORIGIN * 2) / n
+  const minX = -WEB_MERCATOR_ORIGIN + x * size
+  const maxY = WEB_MERCATOR_ORIGIN - y * size
+  return [minX, maxY - size, minX + size, maxY]
+}
+
 export function latLonToWorld(lat: number, lon: number, z: number): { x: number; y: number } {
   const n = 2 ** z
   const x = ((lon + 180) / 360) * n

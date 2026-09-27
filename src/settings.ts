@@ -1,15 +1,28 @@
-import type { Settings } from './types.ts'
+import type { GeoFix, Settings } from './types.ts'
 
 const KEY = 'wx-scope-settings'
+const REFRESH_SECS = new Set([15, 30, 60])
+
+export function clampRadarRefreshSec(n: unknown): number {
+  const v = Number(n)
+  return REFRESH_SECS.has(v) ? v : 30
+}
+
+export function clampFixSource(n: unknown): GeoFix['source'] {
+  if (n === 'gps' || n === 'ip' || n === 'manual') return n
+  return 'ip'
+}
 
 export function defaultSettings(): Settings {
   return {
     lat: null,
     lon: null,
     label: '',
+    fixSource: 'ip',
     rangeMi: 50,
     units: 'mi',
     radarSource: 'auto',
+    radarRefreshSec: 15,
     radarEnabled: true,
     mapEnabled: true,
     lightningEnabled: true,
@@ -28,7 +41,10 @@ export function loadSettings(): Settings {
     const raw = localStorage.getItem(KEY)
     if (!raw) return base
     const parsed = JSON.parse(raw) as Partial<Settings>
-    return { ...base, ...parsed }
+    const merged = { ...base, ...parsed }
+    merged.radarRefreshSec = clampRadarRefreshSec(merged.radarRefreshSec)
+    merged.fixSource = clampFixSource(merged.fixSource)
+    return merged
   } catch {
     return base
   }
