@@ -13,6 +13,15 @@ export function clampFixSource(n: unknown): GeoFix['source'] {
   return 'ip'
 }
 
+/** IP city estimates and unnamed saves should yield to GPS on launch. */
+export function shouldAutolocate(source: GeoFix['source'], label: string): boolean {
+  if (source === 'ip' || source === 'gps') return true
+  const n = label.trim().toUpperCase()
+  if (!n || n === 'GPS' || n === 'IP' || n === 'SAVED' || n === 'MANUAL') return true
+  if (n.includes(',')) return true
+  return false
+}
+
 export function defaultSettings(): Settings {
   return {
     lat: null,

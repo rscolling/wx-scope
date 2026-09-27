@@ -1,5 +1,5 @@
 import { formatAge, formatBearing, formatClock, formatRange } from './geo.ts'
-import { stampSweptSector, sweepCanvasAngle, sweepTurn } from './sweep.ts'
+import { stampSweptSector, sweepCanvasAngle, sweepFrac, sweepTurn } from './sweep.ts'
 import type {
   ConnState,
   EnrichedStrike,
@@ -236,7 +236,7 @@ export class RadarDisplay {
     p.fillRect(0, 0, s, s)
 
     if (look.on && input.sweepTrail !== 'off') {
-      const ang = sweepTurn(input.now, input.sweepSec) * Math.PI * 2
+      const ang = sweepFrac(sweepTurn(input.now, input.sweepSec)) * Math.PI * 2
       const cx = s / 2
       const scale = s / 2 / inner
       p.save()

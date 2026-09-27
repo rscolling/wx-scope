@@ -5,9 +5,14 @@ export function sweepTurn(nowMs: number, sweepSec: number): number {
   return nowMs / 1000 / sweepSec
 }
 
+/** Fractional turn in [0, 1). Canvas transforms lose precision on huge angles. */
+export function sweepFrac(turn: number): number {
+  return ((turn % 1) + 1) % 1
+}
+
 /** Canvas arc angle for a sweep turn (0 = east, clockwise because y is down). */
 export function sweepCanvasAngle(turn: number): number {
-  return turn * Math.PI * 2 - Math.PI / 2
+  return sweepFrac(turn) * Math.PI * 2 - Math.PI / 2
 }
 
 export function pixelTurn(dx: number, dy: number): number {

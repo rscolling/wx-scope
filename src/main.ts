@@ -5,7 +5,7 @@ import { LightningNet, enrich } from './lightning.ts'
 import { PrecipFeed } from './precip.ts'
 import { RadarFeed } from './radar.ts'
 import { RadarDisplay } from './render.ts'
-import { clampRadarRefreshSec, loadSettings, saveSettings } from './settings.ts'
+import { clampRadarRefreshSec, loadSettings, saveSettings, shouldAutolocate } from './settings.ts'
 import type { EnrichedStrike, GeoFix, Settings, SweepBright, SweepColor, SweepTrail } from './types.ts'
 
 declare global {
@@ -34,7 +34,7 @@ const precip = new PrecipFeed()
 const lightning = new LightningNet()
 const audio = new AudioCue()
 
-let origin: GeoFix | null =
+const savedFix: GeoFix | null =
   settings.lat != null && settings.lon != null
     ? {
         lat: settings.lat,
@@ -43,6 +43,9 @@ let origin: GeoFix | null =
         source: settings.fixSource,
       }
     : null
+
+let origin: GeoFix | null =
+  savedFix && !shouldAutolocate(savedFix.source, savedFix.label) ? savedFix : null
 
 let alert: EnrichedStrike | null = null
 let alertUntil = 0
@@ -314,7 +317,12 @@ function bind(): void {
   }
   el.lat.addEventListener('change', commitManual)
   el.lon.addEventListener('change', commitManual)
-  el.label.addEventListener('change', commitManual)
+  el.label.addEventListener('change', () => {
+    if (!origin) return
+    origin = { ...origin, label: el.label.value.trim() || origin.label }
+    settings.label = origin.label
+    persist()
+  })
 
   document.querySelector('#btn-geo')!.addEventListener('click', () => {
     audio.unlock()
@@ -382,7 +390,7 @@ function applyGps(lat: number, lon: number, accuracyM?: number): void {
 }
 
 async function locateGps(force = false): Promise<void> {
-  if (!force && origin?.source === 'manual') return
+  if (!force && origin?.source === 'manual' && !shouldAutolocate('manual', origin.label)) return
   el.fixHint.textContent = 'GPS acquiring…'
   el.pipFix.dataset.state = 'connecting'
 
@@ -395,8 +403,15 @@ async function locateGps(force = false): Promise<void> {
         return
       }
     } catch {
-      /* fall through to the browser geolocation API */
+      /* Windows location unavailable */
     }
+    if (origin) {
+      el.fixHint.textContent = `${fixHint(origin)} — GPS unavailable, enter lat/lon`
+      el.pipFix.dataset.state = 'live'
+    } else {
+      el.fixHint.textContent = 'GPS unavailable — enter lat/lon'
+    }
+    return
   }
 
   if (!navigator.geolocation) {
@@ -407,6 +422,15 @@ async function locateGps(force = false): Promise<void> {
   await new Promise<void>((resolve) => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        const acc = pos.coords.accuracy
+        if (Number.isFinite(acc) && acc > 5_000) {
+          el.fixHint.textContent = origin
+            ? `${fixHint(origin)} — GPS too coarse`
+            : 'GPS too coarse — enter lat/lon'
+          el.pipFix.dataset.state = origin ? 'live' : 'connecting'
+          resolve()
+          return
+        }
         applyGps(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy)
         resolve()
       },
@@ -417,7 +441,7 @@ async function locateGps(force = false): Promise<void> {
         el.pipFix.dataset.state = origin ? 'live' : 'connecting'
         resolve()
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10_000 },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
     )
   })
 }
@@ -528,7 +552,8 @@ if (settings.lightningEnabled) lightning.start()
 if (origin) requestRadar()
 if (!isPip) {
   void (async () => {
-    await locateGps(false)
+    await locateGps(!savedFix || shouldAutolocate(savedFix.source, savedFix.label))
+    if (!origin && savedFix) setOrigin(savedFix)
     if (!origin) await locateIp()
   })()
 }

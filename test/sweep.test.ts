@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inSweptArc, pixelTurn, stampSweptSector, sweepCanvasAngle, sweepTurn } from '../src/sweep.ts'
+import { inSweptArc, pixelTurn, stampSweptSector, sweepCanvasAngle, sweepFrac, sweepTurn } from '../src/sweep.ts'
 
 function xyAt(size: number, turn: number, radiusFrac = 0.6): { x: number; y: number } {
   const cx = (size - 1) / 2
@@ -61,6 +61,13 @@ describe('sweep geometry', () => {
     expect(sweepCanvasAngle(0)).toBeCloseTo(-Math.PI / 2, 10)
     expect(sweepCanvasAngle(0.25)).toBeCloseTo(0, 10)
     expect(sweepTurn(2400, 2.4)).toBeCloseTo(1, 10)
+  })
+
+  it('wraps large turns so canvas rotation stays in one revolution', () => {
+    expect(sweepFrac(7.458e8 + 0.25)).toBeCloseTo(0.25, 6)
+    expect(sweepCanvasAngle(8.25)).toBeCloseTo(sweepCanvasAngle(0.25), 10)
+    expect(sweepCanvasAngle(Date.now() / 1000 / 2.4)).toBeGreaterThan(-Math.PI)
+    expect(sweepCanvasAngle(Date.now() / 1000 / 2.4)).toBeLessThan(Math.PI * 2)
   })
 
   it('includes the azimuth the beam just passed and excludes the start', () => {

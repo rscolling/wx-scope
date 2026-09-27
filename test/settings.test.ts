@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { clampFixSource, clampRadarRefreshSec, defaultSettings, loadSettings, saveSettings } from '../src/settings.ts'
+import {
+  clampFixSource,
+  clampRadarRefreshSec,
+  defaultSettings,
+  loadSettings,
+  saveSettings,
+  shouldAutolocate,
+} from '../src/settings.ts'
 
 const store = new Map<string, string>()
 
@@ -117,5 +124,12 @@ describe('settings', () => {
     expect(clampFixSource('manual')).toBe('manual')
     expect(clampFixSource('ip')).toBe('ip')
     expect(clampFixSource('wifi')).toBe('ip')
+  })
+
+  it('auto-locates IP city estimates and unnamed saves', () => {
+    expect(shouldAutolocate('ip', 'Weaverville, North Carolina')).toBe(true)
+    expect(shouldAutolocate('gps', 'GPS')).toBe(true)
+    expect(shouldAutolocate('manual', 'SAVED')).toBe(true)
+    expect(shouldAutolocate('manual', 'HOME')).toBe(false)
   })
 })
