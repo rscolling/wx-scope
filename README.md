@@ -41,3 +41,7 @@ The crosshair is your fix. Click **GPS** (or press `G`) to center on Windows loc
 - Radar: [NCEP MRMS](https://opengeo.ncep.noaa.gov/) (same 2-minute QC'd mosaic as [radar.weather.gov](https://radar.weather.gov/)), [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/) fallback, [RainViewer](https://www.rainviewer.com/) worldwide
 - Lightning: [Blitzortung.org](https://www.blitzortung.org/) volunteer network
 - Personal / educational use. Radar tiles are polled every 15 seconds by default (15–60s in SCOPE). NOAA MRMS scans land about every 2 minutes; RainViewer about every 10. The sweep paints each new scan onto the scope as the beam passes. Lightning is streamed in near real time.
+
+## License
+
+[MIT](LICENSE)
